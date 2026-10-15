@@ -1,9 +1,6 @@
 name: answer-rounds
 
 on:
-  schedule:
-    # Every 15 minutes, off the top of the hour (GitHub's busiest, most-delayed slot).
-    - cron: "4,19,34,49 * * * *"
   workflow_dispatch:
 
 permissions:
