@@ -1,9 +1,12 @@
-"""Claude fallback for questions the rule solver can't answer."""
+"""Gemini fallback for questions the rule solver can't answer."""
+import json
 import os
 import re
+import urllib.request
 from pathlib import Path
 
-MODEL = "claude-opus-5-5"
+MODEL = "gemini-3.8-flash"
+URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent"
 
 
 def _load_dotenv():
@@ -33,27 +36,25 @@ D) {d}"""
 
 def solve_llm(question, options):
     """Return a letter, or None if no API key is set or the call fails."""
-    if not os.environ.get("ANTHROPIC_API_KEY"):
+    key = os.environ.get("GEMINI_API_KEY")
+    if not key:
         return None
-    import anthropic
-
-    client = anthropic.Anthropic()
     content = PROMPT.format(question=question, a=options[0], b=options[1], c=options[2], d=options[3])
+    body = json.dumps({"contents": [{"role": "user", "parts": [{"text": content}]}]}).encode()
+    req = urllib.request.Request(
+        URL, data=body, headers={"Content-Type": "application/json", "x-goog-api-key": key}
+    )
     try:
-        response = client.beta.messages.create(
-            model=MODEL,
-            max_tokens=16000,
-            output_config={"effort": "medium"},
-            betas=["server-side-fallback-2026-07-01"],
-            fallbacks="default",
-            messages=[{"role": "user", "content": content}],
-        )
+        with urllib.request.urlopen(req, timeout=120) as r:
+            data = json.load(r)
     except Exception as e:  # never let the fallback crash a run; the round still gets written
         print(f"  LLM call failed: {e}")
         return None
-    if response.stop_reason == "refusal":
-        print("  LLM refused")
+    candidates = data.get("candidates") or []
+    if not candidates:
+        print(f"  LLM returned no answer: {data.get('promptFeedback')}")
         return None
-    text = "".join(b.text for b in response.content if b.type == "text")
+    parts = candidates[0].get("content", {}).get("parts", [])
+    text = "".join(p.get("text", "") for p in parts if not p.get("thought"))
     m = re.findall(r"ANSWER:\s*([ABCD])", text)
     return m[-1] if m else None
